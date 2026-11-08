@@ -1,0 +1,6 @@
+{
+  "name": "reply-language",
+  "version": "0.1.0",
+  "description": "Detects the language of each prompt, tells Claude to reply and think in it, and makes Claude rewrite replies written in another language.",
+  "author": { "name": "gh-commiter" }
+}

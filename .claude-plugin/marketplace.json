@@ -1,0 +1,12 @@
+{
+  "name": "reply-language",
+  "owner": { "name": "gh-commiter" },
+  "description": "Keeps Claude Code replies in the user's language",
+  "plugins": [
+    {
+      "name": "reply-language",
+      "source": "./",
+      "description": "Detects the language of each prompt, tells Claude to reply and think in it, and makes Claude rewrite replies written in another language."
+    }
+  ]
+}
