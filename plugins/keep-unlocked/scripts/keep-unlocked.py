@@ -7,7 +7,7 @@
   keep-unlocked.py status    lists running keepers.
 
 KEEP_UNLOCKED_MODE: "auto" (default) or "manual" (the hook does nothing).
-Keepers: macOS caffeinate, Windows SetThreadExecutionState in hidden PowerShell, Linux systemd-inhibit.
+Keepers: macOS caffeinate, Linux systemd-inhibit. Windows uses keep-unlocked.ps1 instead of this script.
 State: one JSON file per keeper in ~/.claude/keep-unlocked/.
 """
 import json
@@ -21,19 +21,13 @@ import time
 
 STATE = os.path.join(os.path.expanduser("~"), ".claude", "keep-unlocked")
 SHELLS = {"sh", "bash", "zsh", "dash", "fish", "ksh", "cmd", "powershell", "pwsh", "python", "python3", "py", "env"}
-# Windows: ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED (0x80000003), written in decimal for PowerShell
-# and a harmless F15 key press (VK_F15 0x7E down, KEYEVENTF_KEYUP 2) that resets the idle timer of the screen saver and lock
-WIN_LOOP = ("$k = Add-Type -Name P -Namespace KeepUnlocked -PassThru -MemberDefinition "
-            "'[DllImport(\"kernel32.dll\")] public static extern uint SetThreadExecutionState(uint f); "
-            "[DllImport(\"user32.dll\")] public static extern void keybd_event(byte k, byte s, uint f, System.UIntPtr e);'; "
-            "while ($true) {{ [void]$k::SetThreadExecutionState(2147483651); "
-            "$k::keybd_event(0x7E, 0, 0, [UIntPtr]::Zero); $k::keybd_event(0x7E, 0, 2, [UIntPtr]::Zero); "
-            "if ({stop}) {{ break }}; Start-Sleep 30 }}")
-# DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW, and CREATE_BREAKAWAY_FROM_JOB
-WIN_FLAGS, WIN_BREAKAWAY = 0x00000008 | 0x00000200 | 0x08000000, 0x01000000
-NO_WINDOW = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW: no console flashes for helper calls
-# only processes whose command line has one of these are this plugin's keepers (macOS, Linux, Windows)
-MARKERS = ("caffeinate -dimsu", "--who=keep-unlocked", "KeepUnlocked")
+# only processes whose command line has one of these are this plugin's keepers
+MARKERS = ("caffeinate -dimsu", "--who=keep-unlocked")  # caffeinate -dimsu: keepers started before 0.2.1
+# macOS: caffeinate -dims keeps it awake, but the idle timer of the screen saver and lock keeps running (-u alone
+# declares activity for 5 s only). So a sh loop declares activity every 60 s, like the F15 press on Windows.
+# TERM (off) and the end of caffeinate (Claude exited, -w) stop at once the loop and all its children (kill 0: own group).
+DARWIN_LOOP = ('trap "trap - TERM; kill 0" TERM; (caffeinate -dims "$@"; kill 0) & '
+               'while :; do caffeinate -u -t 2; sleep 60 & wait $!; done')
 
 
 def mode(env=os.environ):
@@ -78,22 +72,13 @@ def find_claude(table, start):
     return fallback, False
 
 
-def powershell(script, timeout):
-    return subprocess.run(["powershell", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-                          capture_output=True, text=True, timeout=timeout, creationflags=NO_WINDOW).stdout
-
-
 def process_table():
     """{pid: (ppid, name, command line)}."""
-    if os.name == "nt":
-        out = powershell("Get-CimInstance Win32_Process | ForEach-Object { "
-                         "\"$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$($_.CommandLine)\" }", 15)
-        rows = [line.split("\t", 3) for line in out.splitlines()]
-    else:  # comm and args in separate calls: both may contain spaces, each is the last column
-        run = lambda col: subprocess.run(["ps", "-A", "-o", f"pid=,ppid=,{col}="], capture_output=True, text=True,
-                                         timeout=5).stdout.splitlines()
-        args = {r[0]: r[2] if len(r) > 2 else "" for r in (line.split(None, 2) for line in run("args")) if r}
-        rows = [r + [args.get(r[0], "")] for r in (line.split(None, 2) for line in run("comm")) if len(r) == 3]
+    # comm and args in separate calls: both may contain spaces, each is the last column
+    run = lambda col: subprocess.run(["ps", "-A", "-o", f"pid=,ppid=,{col}="], capture_output=True, text=True,
+                                     timeout=5).stdout.splitlines()
+    args = {r[0]: r[2] if len(r) > 2 else "" for r in (line.split(None, 2) for line in run("args")) if r}
+    rows = [r + [args.get(r[0], "")] for r in (line.split(None, 2) for line in run("comm")) if len(r) == 3]
     return {int(r[0]): (int(r[1]), r[2], r[3] if len(r) > 3 else "") for r in rows
             if len(r) >= 3 and r[0].strip().isdigit() and r[1].strip().isdigit()}
 
@@ -101,14 +86,7 @@ def process_table():
 def keeper_cmd(system, claude_pid=None, which=shutil.which):
     """Command that keeps the machine awake; with claude_pid it exits when that process ends. None: unsupported."""
     if system == "Darwin":
-        return ["caffeinate", "-dimsu"] + (["-w", str(claude_pid)] if claude_pid else [])
-    if system == "Windows":
-        # holding the process handle keeps the pid from being reused, so HasExited really means Claude ended
-        wait, stop = (f"$p = Get-Process -Id {claude_pid} -ErrorAction SilentlyContinue; $null = $p.Handle; ",
-                      "-not $p -or $p.HasExited") \
-            if claude_pid else ("", "$false")
-        return ["powershell", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command",
-                wait + WIN_LOOP.format(stop=stop)]
+        return ["sh", "-c", DARWIN_LOOP, "keep-unlocked"] + (["-w", str(claude_pid)] if claude_pid else [])
     if system == "Linux" and which("systemd-inhibit"):
         wait = ["tail", f"--pid={claude_pid}", "-f", "/dev/null"] if claude_pid else ["sleep", "infinity"]
         return ["systemd-inhibit", "--what=idle:sleep", "--who=keep-unlocked", "--why=Claude Code", "--mode=block"] + wait
@@ -116,8 +94,6 @@ def keeper_cmd(system, claude_pid=None, which=shutil.which):
 
 
 def command_line(pid):
-    if os.name == "nt":
-        return powershell(f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine", 10)
     return subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True, timeout=5).stdout
 
 
@@ -128,7 +104,9 @@ def running(rec, cmdline=command_line):
         return False
     line = cmdline(pid) or ""
     # the keeper program itself, not e.g. a shell whose command line mentions the marker
-    return base(first_token(line)) in ("caffeinate", "systemd-inhibit", "powershell") and any(m in line for m in MARKERS)
+    prog = base(first_token(line))
+    return (prog in ("caffeinate", "systemd-inhibit") and any(m in line for m in MARKERS)
+            or prog == "sh" and DARWIN_LOOP in line)
 
 
 def keepers(state=STATE, alive=running):
@@ -151,25 +129,13 @@ def keepers(state=STATE, alive=running):
     return result
 
 
-def spawn_windows(cmd, popen=subprocess.Popen):
-    def run(flags):
-        return popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     creationflags=flags, close_fds=True)
-    try:  # leave Claude's job object so the keeper is not killed with the hook
-        return run(WIN_FLAGS | WIN_BREAKAWAY)
-    except OSError:  # the job forbids breakaway
-        return run(WIN_FLAGS)
-
-
 def start(kind, claude_pid=None, found=True):
     cmd = keeper_cmd(platform.system(), claude_pid)
     if not cmd:
-        return f"keep-unlocked: {platform.system()} is not supported (Linux needs systemd-inhibit)."
-    if os.name == "nt":
-        proc = spawn_windows(cmd)
-    else:
-        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                start_new_session=True, close_fds=True)
+        return (f"keep-unlocked: {platform.system()} is not supported (Linux needs systemd-inhibit; "
+                "Windows uses keep-unlocked.ps1).")
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            start_new_session=True, close_fds=True)
     rec = {"pid": proc.pid, "mode": kind, "claude_pid": claude_pid, "claude_found": found,
            "cmd": base(cmd[0]), "started": time.strftime("%Y-%m-%d %H:%M:%S")}
     os.makedirs(STATE, exist_ok=True)
@@ -190,12 +156,8 @@ def describe(rec):
 
 def stop(rec):
     try:  # the keeper may have ended meanwhile; its file goes anyway
-        if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(rec["pid"]), "/F"], capture_output=True, timeout=10,
-                           creationflags=NO_WINDOW)
-        else:
-            os.kill(rec["pid"], signal.SIGTERM)
-    except (OSError, subprocess.SubprocessError):
+        os.kill(rec["pid"], signal.SIGTERM)
+    except OSError:
         pass
     try:
         os.remove(os.path.join(STATE, f"{rec['pid']}.json"))

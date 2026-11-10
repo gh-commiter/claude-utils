@@ -16,25 +16,9 @@ assert ku.mode({"KEEP_UNLOCKED_MODE": " Manual "}) == "manual"
 assert ku.mode({"KEEP_UNLOCKED_MODE": "off"}) == "auto"
 
 # commands per platform
-assert ku.keeper_cmd("Darwin", 42) == ["caffeinate", "-dimsu", "-w", "42"]
-assert ku.keeper_cmd("Darwin") == ["caffeinate", "-dimsu"]
-win = ku.keeper_cmd("Windows", 42)
-assert win[0] == "powershell" and "-NoLogo" in win and "2147483651" in win[-1] and "Get-Process -Id 42" in win[-1], win
-assert "keybd_event(0x7E, 0, 0," in win[-1] and "keybd_event(0x7E, 0, 2," in win[-1] and "Start-Sleep 30" in win[-1]
-assert "if ($false)" in ku.keeper_cmd("Windows")[-1]
-
-# Windows spawn: breakaway from the job first, without it when the job forbids it
-calls = []
-def fake_popen(cmd, creationflags, **kw):
-    calls.append(creationflags)
-    if creationflags & ku.WIN_BREAKAWAY:
-        raise PermissionError("access denied")
-    return "proc"
-assert ku.spawn_windows(["x"], fake_popen) == "proc"
-assert calls == [ku.WIN_FLAGS | ku.WIN_BREAKAWAY, ku.WIN_FLAGS], calls
-calls.clear()
-assert ku.spawn_windows(["x"], lambda cmd, creationflags, **kw: calls.append(creationflags) or "p") == "p"
-assert calls == [ku.WIN_FLAGS | ku.WIN_BREAKAWAY]
+assert ku.keeper_cmd("Darwin", 42) == ["sh", "-c", ku.DARWIN_LOOP, "keep-unlocked", "-w", "42"]
+assert ku.keeper_cmd("Darwin") == ["sh", "-c", ku.DARWIN_LOOP, "keep-unlocked"]
+assert ku.keeper_cmd("Windows", 42) is None  # Windows runs keep-unlocked.ps1
 has = lambda name: "/usr/bin/" + name
 assert ku.keeper_cmd("Linux", 42, has)[-4:] == ["tail", "--pid=42", "-f", "/dev/null"]
 assert ku.keeper_cmd("Linux", None, has)[0] == "systemd-inhibit" and ku.keeper_cmd("Linux", None, has)[-2:] == ["sleep", "infinity"]
@@ -59,34 +43,16 @@ assert ku.find_claude(table, 100) == (90, False)
 assert ku.find_claude({100: (1, "bash", "bash")}, 100) == (None, False)
 assert ku.find_claude({100: (100, "sh", "sh")}, 100) == (None, False)  # loop safety
 
-# Windows: quoted paths with spaces, Git Bash wrapper between the hook and Claude
-win_table = {
-    300: (200, "bash.exe", r'"C:\Program Files\Git\bin\bash.exe" -c "python3 C:/Users/u/.claude/plugins/x/keep-unlocked.py session"'),
-    200: (150, "node.exe", r'"C:\Program Files\nodejs\node.exe" C:\Users\u\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\cli.js'),
-    150: (1, "explorer.exe", r"C:\Windows\explorer.exe"),
-}
-assert ku.find_claude(win_table, 300) == (200, True)
-win_table[200] = (150, "claude.exe", r'"C:\Users\u\.local\bin\claude.exe"')
-assert ku.find_claude(win_table, 300) == (200, True)
-win_table[200] = (150, "Code.exe", r'"C:\Program Files\Microsoft VS Code\Code.exe"')
-assert ku.find_claude(win_table, 300) == (200, False)  # bash.exe is skipped as a shell
-assert ku.first_token(r'"C:\Program Files\Git\bin\bash.exe" -c x') == r"C:\Program Files\Git\bin\bash.exe"
-
 # running: only a keeper's own command line counts, not a reused pid or a record without pid
 assert ku.running({"pid": 5, "cmd": "caffeinate"}, lambda pid: "caffeinate -dimsu -w 9")
+assert ku.running({"pid": 5}, lambda pid: " ".join(ku.keeper_cmd("Darwin", 9)))  # ps shows the sh loop like this
+assert not ku.running({"pid": 5}, lambda pid: "sh -c caffeinate -dims")  # another shell
 assert ku.running({"pid": 5}, lambda pid: "systemd-inhibit --what=idle:sleep --who=keep-unlocked --why=x tail")
-assert ku.running({"pid": 5}, lambda pid: " ".join(ku.keeper_cmd("Windows", 9)))
-assert not ku.running({"pid": 5, "cmd": "powershell"}, lambda pid: "powershell.exe -NoExit")  # user's own PowerShell
 assert not ku.running({"pid": 5, "cmd": "caffeinate"}, lambda pid: "caffeinate -i make")
 assert not ku.running({"pid": 5}, lambda pid: "")  # gone
 assert not ku.running({"pid": 5}, lambda pid: "zsh -c pgrep -fl 'caffeinate -dimsu'")  # shell mentioning the marker
-assert ku.running({"pid": 5}, lambda pid: '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command KeepUnlocked')
 assert not ku.running({"cmd": "caffeinate"}, lambda pid: "caffeinate -dimsu")
 assert not ku.running({"pid": True}, lambda pid: "caffeinate -dimsu")
-
-# Windows loop takes the Claude process once, so a reused pid does not keep it running
-w = ku.keeper_cmd("Windows", 42)[-1]
-assert w.startswith("$p = Get-Process -Id 42") and "$null = $p.Handle;" in w and "-not $p -or $p.HasExited" in w, w
 
 # stale pidfiles are removed, running ones kept
 state = tempfile.mkdtemp()
