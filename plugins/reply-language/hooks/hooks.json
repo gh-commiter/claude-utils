@@ -1,10 +1,10 @@
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/reply-language.py\" prompt", "timeout": 5 } ] }
+      { "hooks": [ { "type": "command", "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/scripts/run.sh\" prompt", "timeout": 10 } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/reply-language.py\" stop", "timeout": 10 } ] }
+      { "hooks": [ { "type": "command", "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/scripts/run.sh\" stop", "timeout": 10 } ] }
     ]
   }
 }

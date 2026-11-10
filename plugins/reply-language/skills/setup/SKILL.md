@@ -16,9 +16,14 @@ Supported codes: `sl` Slovenian, `en` English, `cs` Czech, `sk` Slovak, `hr` Cro
    - Otherwise ask with AskUserQuestion. Offer "<user's language>,en (Recommended)" and "en". The first code is
      the default until a session's language is known.
 3. Set `env.REPLY_LANGUAGE_ALLOWED` to the codes joined with commas, for example `"sl,en"`. Keep every other key.
-4. Look in `hooks.UserPromptSubmit` and `hooks.Stop` for commands that run a different `reply-language.py`,
-   not the one from `${CLAUDE_PLUGIN_ROOT}`. List them and, after the user confirms, remove only those entries.
-   Remove an event key or a matcher group that ends up empty. Leave the script file alone.
-5. Write the file back as valid JSON. Check it with `python3 -m json.tool ~/.claude/settings.json`.
-6. Check the script: `python3 "${CLAUDE_PLUGIN_ROOT}/tests/test_reply_language.py"` must print `ok`.
+4. Look in `hooks.UserPromptSubmit` and `hooks.Stop` for commands that run a different `reply-language.py` or
+   `reply-language.ps1`, not the one from `${CLAUDE_PLUGIN_ROOT}`. List them and, after the user confirms, remove
+   only those entries. Remove an event key or a matcher group that ends up empty. Leave the script file alone.
+5. Write the file back as valid JSON. Check it: on Windows (Python may be missing there)
+   `powershell -NoProfile -Command "Get-Content ~/.claude/settings.json -Raw | ConvertFrom-Json | Out-Null"`,
+   elsewhere `python3 -m json.tool ~/.claude/settings.json`.
+6. Check the scripts; each must print `ok`. With Python 3 installed:
+   `python3 "${CLAUDE_PLUGIN_ROOT}/tests/test_reply_language.py"` (on Windows `python -X utf8` or `py -3 -X utf8`;
+   never the Microsoft Store `python3` stub). On Windows also the fallback
+   `powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/reply-language.ps1" selftest`.
 7. Tell the user that the new settings apply from the next session or after `/hooks` is reloaded.

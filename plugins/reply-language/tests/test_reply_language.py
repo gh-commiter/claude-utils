@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "..", "scripts", "reply-language.py")
 spec = importlib.util.spec_from_file_location("rl", SCRIPT)
@@ -32,5 +33,10 @@ assert run("stop", {"session_id": session, "last_assistant_message": "This is th
 bad = run("stop", {"session_id": session, "last_assistant_message": "Ovo je hook koji provjerava što će biti, jer sada treba ovdje."})
 assert bad.returncode == 2 and "Croatian" in bad.stderr, bad
 assert run("stop", {"session_id": session, "last_assistant_message": "This is the hook that checks it."}, allowed="sl").returncode == 2  # en ni dovoljen
+assert run("stop", {"session_id": session, "stop_hook_active": True,  # le en popravek
+                    "last_assistant_message": "Ovo je hook koji provjerava što će biti, jer sada treba ovdje."}).returncode == 0
+t = time.perf_counter()
+assert rl.strip_code("a/b " + "x" * 20000 + " c") == "  " + "x" * 20000 + " c"
+assert time.perf_counter() - t < 0.5  # linearno, ne kvadratno (prej več sekund)
 os.remove(os.path.join(tempfile.gettempdir(), f"claude-reply-language-{session}"))
 print("ok")

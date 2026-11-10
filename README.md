@@ -13,7 +13,9 @@ Small Claude Code plugins in one marketplace.
 /plugin install keep-unlocked@claude-utils
 ```
 
-Both need `python3` (standard library only), except keep-unlocked on Windows, which uses only PowerShell.
+On macOS and Linux both need `python3` (standard library only). On Windows neither needs Python: keep-unlocked uses
+Windows PowerShell, reply-language uses Python when it is installed, else PowerShell. Hooks run from Git Bash, Claude
+Code's default hook shell there.
 
 **Upgrading from the old `reply-language` marketplace** (`gh-commiter/claude-reply-language`): remove it with
 `/plugin marketplace remove reply-language`, then add `gh-commiter/claude-utils` and install
@@ -32,7 +34,12 @@ Detected languages: Slovenian, English, Czech, Slovak, Croatian, German.
 one is the default) to `~/.claude/settings.json` and removes an older standalone copy of the hook. Without it,
 only English and the user's language are allowed.
 
-**Test:** `python3 plugins/reply-language/tests/test_reply_language.py` prints `ok`.
+Windows: the hooks use an installed Python 3 (`python3`, `python` or the `py` launcher; the Microsoft Store stub is
+skipped). Without one, `reply-language.ps1` runs instead: same behaviour, but each hook takes about 1 s (PowerShell
+start-up) instead of about 0.3 s.
+
+**Test:** `python3 plugins/reply-language/tests/test_reply_language.py` prints `ok`; on Windows
+`powershell -ExecutionPolicy Bypass -File plugins/reply-language/scripts/reply-language.ps1 selftest` prints `ok`.
 
 ## keep-unlocked
 

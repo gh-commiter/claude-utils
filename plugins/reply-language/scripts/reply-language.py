@@ -41,7 +41,8 @@ SHARED = re.compile(r"[ťďňýáíéúŤĎŇÝÁÍÉÚ]")  # češčina in slov
 def strip_code(text):
     text = re.sub(r"```.*?```", " ", text, flags=re.S)
     text = re.sub(r"`[^`\n]*`", " ", text)
-    return re.sub(r"https?://\S+|\S+[/\\]\S+", " ", text)  # URL-ji in poti
+    # URL-ji in poti: beseda s / ali \ med znaki; (?<!\S) jo zasidra na začetek, sicer je čas kvadraten
+    return re.sub(r"(?<!\S)\S+[/\\]\S+", " ", text)
 
 
 def scores(text):
@@ -122,6 +123,9 @@ def on_prompt(data):
 
 
 def on_stop(data):
+    # le en popravek: povratna informacija hooka je v prepisu isMeta, zato bi se prvi tuji odgovor ocenjeval znova
+    if data.get("stop_hook_active"):
+        return 0
     try:
         lang = open(state_file(data.get("session_id", "default"))).read().strip()
     except OSError:
