@@ -1,7 +1,7 @@
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/keep-unlocked.py\" session", "timeout": 30 } ] }
+      { "hooks": [ { "type": "command", "command": "if [ \"$OS\" = Windows_NT ]; then exec powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/keep-unlocked.ps1\" session; else python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/keep-unlocked.py\" session; fi", "timeout": 30 } ] }
     ]
   }
 }

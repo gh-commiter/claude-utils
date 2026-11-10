@@ -13,7 +13,7 @@ Small Claude Code plugins in one marketplace.
 /plugin install keep-unlocked@claude-utils
 ```
 
-Both need `python3` (standard library only).
+Both need `python3` (standard library only), except keep-unlocked on Windows, which uses only PowerShell.
 
 **Upgrading from the old `reply-language` marketplace** (`gh-commiter/claude-reply-language`): remove it with
 `/plugin marketplace remove reply-language`, then add `gh-commiter/claude-utils` and install
@@ -47,21 +47,23 @@ While you work with Claude, the computer does not sleep, start the screen saver 
 - **auto** (default): a SessionStart hook starts a keeper that ends when that Claude Code process exits.
 - **manual**: the hook does nothing; use `on` and `off`.
 
-Status: `python3 plugins/keep-unlocked/scripts/keep-unlocked.py status`. Keepers are tracked in
+Status: `python3 plugins/keep-unlocked/scripts/keep-unlocked.py status`, on Windows
+`powershell -ExecutionPolicy Bypass -File plugins/keep-unlocked/scripts/keep-unlocked.ps1 status`. Keepers are tracked in
 `~/.claude/keep-unlocked/`.
 
 | OS | Keeper |
 | --- | --- |
 | macOS | `caffeinate -dimsu` (`-w <Claude pid>` in auto mode) |
-| Windows | hidden PowerShell that every 30 s calls `SetThreadExecutionState(ES_CONTINUOUS \| ES_SYSTEM_REQUIRED \| ES_DISPLAY_REQUIRED)` and sends a harmless F15 key press, which resets the screen saver and lock idle timer |
+| Windows | `keep-unlocked.ps1`, no Python: a scheduled task in `\keep-unlocked\` (one per keeper, removed when it ends) runs windowless PowerShell (`conhost --headless`) that every 30 s calls `SetThreadExecutionState(ES_CONTINUOUS \| ES_SYSTEM_REQUIRED \| ES_DISPLAY_REQUIRED)` and sends a harmless F15 key press, which resets the screen saver and lock idle timer |
 | Linux | `systemd-inhibit --what=idle:sleep` if installed; otherwise the plugin reports that the system is not supported |
 
 **Limits:** it prevents the *idle* sleep and lock only. It cannot unlock a locked computer, and a lock enforced by
 policy on a fixed schedule (MDM, Group Policy) may still win.
-- Windows: `python3` must be on `PATH` (a real install, not the Microsoft Store stub). If Claude Code's job object
-  forbids breakaway, a manual keeper may end together with Claude.
+- Windows: the hook needs Git Bash (Claude Code's default hook shell there). An auto keeper ends within a few seconds
+  after Claude ends.
 - Linux: GNOME and KDE screen lockers may ignore logind idle inhibitors; over SSH, blocking sleep may need polkit.
 
-Only macOS has been tested.
+Tested on macOS and Windows 11 (Claude Code not elevated; running as administrator is untested).
 
-**Test:** `python3 plugins/keep-unlocked/tests/test_keep_unlocked.py` prints `ok`.
+**Test:** `python3 plugins/keep-unlocked/tests/test_keep_unlocked.py` prints `ok`; on Windows
+`powershell -ExecutionPolicy Bypass -File plugins/keep-unlocked/scripts/keep-unlocked.ps1 selftest` prints `ok`.
