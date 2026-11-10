@@ -23,11 +23,17 @@ STATE = os.path.join(os.path.expanduser("~"), ".claude", "keep-unlocked")
 SHELLS = {"sh", "bash", "zsh", "dash", "fish", "ksh", "cmd", "powershell", "pwsh", "python", "python3", "py", "env"}
 # only processes whose command line has one of these are this plugin's keepers
 MARKERS = ("caffeinate -dimsu", "--who=keep-unlocked")  # caffeinate -dimsu: keepers started before 0.2.1
-# macOS: caffeinate -dims keeps it awake, but the idle timer of the screen saver and lock keeps running (-u alone
-# declares activity for 5 s only). So a sh loop declares activity every 60 s, like the F15 press on Windows.
+# macOS: caffeinate -dims keeps it awake, but the screen saver and its lock follow the HID idle timer, which neither
+# caffeinate -d nor -u resets. So a sh loop posts a real input event every 60 s, like the F15 press on Windows:
+# a mouse move to where the pointer already is (nothing visible; F15 would change the brightness on a Mac).
+# caffeinate -u -t 2 also turns the display on. A mouse move needs no permission (Accessibility or Automation);
+# a key press would need Accessibility.
 # TERM (off) and the end of caffeinate (Claude exited, -w) stop at once the loop and all its children (kill 0: own group).
-DARWIN_LOOP = ('trap "trap - TERM; kill 0" TERM; (caffeinate -dims "$@"; kill 0) & '
-               'while :; do caffeinate -u -t 2; sleep 60 & wait $!; done')
+DARWIN_START = 'trap "trap - TERM; kill 0" TERM; (caffeinate -dims "$@"; kill 0) & '  # also how running() knows it
+DARWIN_MOVE = ('ObjC.import("CoreGraphics"); $.CGEventPost($.kCGHIDEventTap, $.CGEventCreateMouseEvent(null, '
+               '$.kCGEventMouseMoved, $.CGEventGetLocation($.CGEventCreate(null)), 0))')
+DARWIN_LOOP = (DARWIN_START + "while :; do caffeinate -u -t 2; osascript -l JavaScript -e '" + DARWIN_MOVE +
+               "' >/dev/null 2>&1; sleep 60 & wait $!; done")
 
 
 def mode(env=os.environ):
@@ -106,7 +112,7 @@ def running(rec, cmdline=command_line):
     # the keeper program itself, not e.g. a shell whose command line mentions the marker
     prog = base(first_token(line))
     return (prog in ("caffeinate", "systemd-inhibit") and any(m in line for m in MARKERS)
-            or prog == "sh" and DARWIN_LOOP in line)
+            or prog == "sh" and DARWIN_START in line)  # 0.2.1 keepers too
 
 
 def keepers(state=STATE, alive=running):

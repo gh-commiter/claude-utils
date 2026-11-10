@@ -47,6 +47,7 @@ assert ku.find_claude({100: (100, "sh", "sh")}, 100) == (None, False)  # loop sa
 assert ku.running({"pid": 5, "cmd": "caffeinate"}, lambda pid: "caffeinate -dimsu -w 9")
 assert ku.running({"pid": 5}, lambda pid: " ".join(ku.keeper_cmd("Darwin", 9)))  # ps shows the sh loop like this
 assert not ku.running({"pid": 5}, lambda pid: "sh -c caffeinate -dims")  # another shell
+assert "kCGEventMouseMoved" in ku.DARWIN_LOOP and "caffeinate -u -t 2" in ku.DARWIN_LOOP and "sleep 60" in ku.DARWIN_LOOP
 assert ku.running({"pid": 5}, lambda pid: "systemd-inhibit --what=idle:sleep --who=keep-unlocked --why=x tail")
 assert not ku.running({"pid": 5, "cmd": "caffeinate"}, lambda pid: "caffeinate -i make")
 assert not ku.running({"pid": 5}, lambda pid: "")  # gone
