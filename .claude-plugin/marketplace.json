@@ -1,12 +1,17 @@
 {
-  "name": "reply-language",
+  "name": "claude-utils",
   "owner": { "name": "gh-commiter" },
-  "description": "Keeps Claude Code replies in the user's language",
+  "description": "Small Claude Code plugins: reply in the user's language, keep the computer awake and unlocked",
   "plugins": [
     {
       "name": "reply-language",
-      "source": "./",
+      "source": "./plugins/reply-language",
       "description": "Detects the language of each prompt, tells Claude to reply and think in it, and makes Claude rewrite replies written in another language."
+    },
+    {
+      "name": "keep-unlocked",
+      "source": "./plugins/keep-unlocked",
+      "description": "Keeps the computer from sleeping, starting the screen saver or idle-locking while Claude Code runs (macOS, Windows; Linux best-effort)."
     }
   ]
 }

@@ -1,0 +1,6 @@
+{
+  "name": "keep-unlocked",
+  "version": "0.1.0",
+  "description": "Keeps the computer from sleeping, starting the screen saver or idle-locking while Claude Code runs (macOS, Windows; Linux best-effort).",
+  "author": { "name": "gh-commiter" }
+}
