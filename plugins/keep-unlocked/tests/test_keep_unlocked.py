@@ -73,5 +73,25 @@ open(os.path.join(state, f"{dead.pid}.json"), "w").close()
 ku.STATE = state
 ku.stop({"pid": dead.pid})  # ProcessLookupError is ignored
 assert os.listdir(state) == [], os.listdir(state)
+
+# untracked keeper processes are found, tracked ones, foreign caffeinate and shells are not
+tbl = {7: (1, "caffeinate", "caffeinate -dimsu"), 8: (1, "caffeinate", "caffeinate -dimsu -w 3"),
+       9: (1, "caffeinate", "caffeinate -i make"), 10: (1, "zsh", "zsh -c 'caffeinate -dimsu'")}
+assert ku.untracked(tbl, {8}) == [{"pid": 7, "mode": "unknown", "cmd": "caffeinate"}], ku.untracked(tbl, {8})
+loop = " ".join(["sh", "-c", ku.DARWIN_LOOP, "keep-unlocked"])  # sh keeper and its forked subshell (same args)
+tbl = {20: (1, "sh", loop), 21: (20, "sh", loop), 30: (1, "sh", loop), 31: (30, "sh", loop)}
+assert [r["pid"] for r in ku.untracked(tbl, {30})] == [20], ku.untracked(tbl, {30})
+
+# set_mode keeps other keys, creates a missing file, leaves broken JSON alone
+path = os.path.join(state, "settings.json")
+assert "set to manual" in ku.set_mode("manual", path)
+assert json.load(open(path)) == {"env": {"KEEP_UNLOCKED_MODE": "manual"}}
+json.dump({"model": "x", "env": {"A": "1", "KEEP_UNLOCKED_MODE": "auto"}}, open(path, "w"))
+ku.set_mode("manual", path)
+assert json.load(open(path)) == {"model": "x", "env": {"A": "1", "KEEP_UNLOCKED_MODE": "manual"}}
+assert ku.set_mode("manual", path) == "mode: manual"
+open(path, "w").write("{broken")
+assert "not changed" in ku.set_mode("manual", path) and open(path).read() == "{broken"
+os.remove(path)
 os.rmdir(state)
 print("ok")

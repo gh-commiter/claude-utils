@@ -48,8 +48,8 @@ While you work with Claude, the computer does not sleep, start the screen saver 
 | Skill | What it does |
 | --- | --- |
 | `/keep-unlocked:mode auto\|manual` | Sets `env.KEEP_UNLOCKED_MODE` in `~/.claude/settings.json`. Applies from the next session. |
-| `/keep-unlocked:on` | Starts a keeper now. It runs until `/keep-unlocked:off` or reboot. |
-| `/keep-unlocked:off` | Stops every keeper the plugin started (manual and auto). |
+| `/keep-unlocked:on` | Starts a keeper now, unless one already runs. It runs until `/keep-unlocked:off` or reboot. |
+| `/keep-unlocked:off` | Stops every keeper the plugin started (manual and auto) and sets the mode to manual. |
 
 - **auto** (default): a SessionStart hook starts a keeper that ends when that Claude Code process exits.
 - **manual**: the hook does nothing; use `on` and `off`.

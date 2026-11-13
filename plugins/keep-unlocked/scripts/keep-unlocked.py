@@ -2,13 +2,13 @@
 """Keeps the computer awake and unlocked while Claude Code runs.
 
   keep-unlocked.py session   SessionStart hook: in auto mode starts a keeper that ends with this Claude process.
-  keep-unlocked.py on        starts a manual keeper; it runs until `off` or reboot.
-  keep-unlocked.py off       stops every keeper this plugin started.
+  keep-unlocked.py on        starts a manual keeper (unless one already runs); it runs until `off` or reboot.
+  keep-unlocked.py off       stops every keeper this plugin started and sets the mode to manual.
   keep-unlocked.py status    lists running keepers.
 
 KEEP_UNLOCKED_MODE: "auto" (default) or "manual" (the hook does nothing).
 Keepers: macOS caffeinate, Linux systemd-inhibit. Windows uses keep-unlocked.ps1 instead of this script.
-State: one JSON file per keeper in ~/.claude/keep-unlocked/.
+State: one JSON file per keeper in ~/.claude/keep-unlocked/; the mode is env.KEEP_UNLOCKED_MODE in ~/.claude/settings.json.
 """
 import json
 import os
@@ -20,6 +20,7 @@ import sys
 import time
 
 STATE = os.path.join(os.path.expanduser("~"), ".claude", "keep-unlocked")
+SETTINGS = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
 SHELLS = {"sh", "bash", "zsh", "dash", "fish", "ksh", "cmd", "powershell", "pwsh", "python", "python3", "py", "env"}
 # only processes whose command line has one of these are this plugin's keepers
 MARKERS = ("caffeinate -dimsu", "--who=keep-unlocked")  # caffeinate -dimsu: keepers started before 0.2.1
@@ -135,6 +136,46 @@ def keepers(state=STATE, alive=running):
     return result
 
 
+def untracked(table, known):
+    """Keeper processes without a state file (file deleted, older version): {pid, mode: "unknown"} records.
+    Only the top keeper process counts, not its forked sh subshell."""
+    keeper = lambda pid: running({"pid": pid}, lambda _: table[pid][2])
+    return [{"pid": pid, "mode": "unknown", "cmd": base(first_token(table[pid][2]))} for pid in sorted(table)
+            if pid not in known and keeper(pid) and not (table[pid][0] in table and keeper(table[pid][0]))]
+
+
+def all_keepers():
+    """Tracked keepers plus keeper processes this plugin started but lost track of."""
+    found = keepers()
+    try:
+        found += untracked(process_table(), {r["pid"] for r in found})
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return found
+
+
+def set_mode(value, path=SETTINGS):
+    """Writes env.KEEP_UNLOCKED_MODE into settings.json; an unreadable file is left untouched."""
+    try:
+        with open(path) as fh:
+            settings = json.load(fh)
+    except FileNotFoundError:
+        settings = {}
+    except (OSError, ValueError) as e:
+        return f"mode not changed, {path} is not readable JSON: {e}"
+    if not isinstance(settings, dict) or not isinstance(settings.get("env", {}), dict):
+        return f"mode not changed, unexpected structure in {path}"
+    if settings.get("env", {}).get("KEEP_UNLOCKED_MODE") == value:
+        return f"mode: {value}"
+    settings.setdefault("env", {})["KEEP_UNLOCKED_MODE"] = value
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(settings, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+    return f"mode set to {value} (applies from the next session)"
+
+
 def start(kind, claude_pid=None, found=True):
     cmd = keeper_cmd(platform.system(), claude_pid)
     if not cmd:
@@ -153,6 +194,8 @@ def start(kind, claude_pid=None, found=True):
 def describe(rec):
     if rec.get("mode") == "manual":
         until = "until off or reboot"
+    elif rec.get("mode") == "unknown":
+        until = "untracked (no state file)"
     else:
         until = f"while Claude pid {rec.get('claude_pid')} runs"
         if not rec.get("claude_found"):
@@ -199,18 +242,23 @@ def main(cmd):
             print(f"keep-unlocked: {e}", file=sys.stderr)
         return 0
     if cmd == "on":
-        manual = [r for r in keepers() if r.get("mode") == "manual"]
-        print("already running: " + describe(manual[0]) if manual else start("manual"))
+        found = all_keepers()
+        lasting = [r for r in found if r.get("mode") != "auto"]  # auto ones end with their session
+        for r in found:
+            print(("already running: " if r in lasting else "running: ") + describe(r))
+        if not lasting:
+            print(start("manual"))
     elif cmd == "off":
-        found = keepers()
+        found = all_keepers()
         for r in found:
             stop(r)
             print("stopped " + describe(r))
         if not found:
             print("no keeper running")
+        print(set_mode("manual"))
     elif cmd == "status":
         print(f"mode: {mode()}")
-        found = keepers()
+        found = all_keepers()
         for r in found:
             print(describe(r))
         if not found:

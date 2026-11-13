@@ -4,6 +4,7 @@ param([string]$Cmd = '', [int]$ClaudePid = 0, [string]$Kind = 'manual', [int]$Fo
 $ErrorActionPreference = 'Stop'
 $State = Join-Path $HOME '.claude\keep-unlocked'
 $TaskPath = '\keep-unlocked\'
+$Settings = Join-Path $HOME '.claude\settings.json'
 $Shells = 'sh', 'bash', 'zsh', 'dash', 'fish', 'ksh', 'cmd', 'powershell', 'pwsh', 'python', 'python3', 'py', 'env'
 
 function Get-Mode {
@@ -57,8 +58,38 @@ function Get-Keepers($t) {
     }
 }
 
+# Tracked keepers plus keeper processes without a state file (file deleted, older version)
+function Get-AllKeepers($t) {
+    $f = @(Get-Keepers $t)
+    $known = @($f | ForEach-Object { [int]$_.pid })
+    $f
+    foreach ($id in $t.Keys | Sort-Object) {
+        if ($known -notcontains $id -and (Test-Keeper @{ pid = $id } $t)) {
+            [pscustomobject]@{ pid = $id; mode = 'unknown'; cmd = 'powershell' } }
+    }
+}
+
+# Writes env.KEEP_UNLOCKED_MODE into settings.json; an unreadable file is left untouched
+function Set-Mode([string]$value, [string]$path = $Settings) {
+    $s = [pscustomobject]@{}
+    if (Test-Path $path) {
+        try { $raw = [IO.File]::ReadAllText($path); if ($raw.Trim()) { $s = $raw | ConvertFrom-Json } }
+        catch { return "mode not changed, $path is not readable JSON: $_" }
+    }
+    if ($s -isnot [pscustomobject]) { return "mode not changed, unexpected structure in $path" }
+    if ($null -eq $s.env) { $s | Add-Member env ([pscustomobject]@{}) }
+    elseif ($s.env -isnot [pscustomobject]) { return "mode not changed, unexpected structure in $path" }
+    if ($s.env.KEEP_UNLOCKED_MODE -eq $value) { return "mode: $value" }
+    $s.env | Add-Member -Force KEEP_UNLOCKED_MODE $value
+    Remove-TypeData System.Array -ErrorAction SilentlyContinue  # 5.1: arrays would be written as {"value":[...],"Count":n}
+    [IO.File]::WriteAllText("$path.tmp", ($s | ConvertTo-Json -Depth 100))
+    Move-Item -Force "$path.tmp" $path
+    "mode set to $value (applies from the next session)"
+}
+
 function Format-Keeper($r) {
-    if ($r.mode -eq 'manual') { $u = 'until off or reboot' } else {
+    if ($r.mode -eq 'manual') { $u = 'until off or reboot' }
+    elseif ($r.mode -eq 'unknown') { $u = 'untracked (no state file)' } else {
         $u = "while Claude pid $($r.claude_pid) runs"
         if (-not $r.claude_found) { $u += ' (Claude process not identified, nearest parent process used)' }
     }
@@ -165,6 +196,17 @@ function Invoke-SelfTest {
     Assert (-not (Test-Keeper @{ pid = 2 } $k)) 'Test-Keeper ignores shells'
     Assert (-not (Test-Keeper @{ pid = 3 } $k)) 'Test-Keeper ignores other commands'
     Assert (-not (Test-Keeper @{ pid = 'x' } $k)) 'Test-Keeper corrupt pid'
+    $u = @(Get-AllKeepers $k); Assert ($u.Count -eq 1 -and $u[0].pid -eq 1 -and $u[0].mode -eq 'unknown') 'Get-AllKeepers untracked'
+    $tmp = [IO.Path]::GetTempFileName(); Remove-Item $tmp
+    Assert ((Set-Mode 'manual' $tmp) -like '*set to manual*') 'Set-Mode creates the file'
+    [IO.File]::WriteAllText($tmp, '{"model":"x","permissions":{"allow":["a"]},"env":{"A":"1","KEEP_UNLOCKED_MODE":"auto"}}')
+    $null = Set-Mode 'manual' $tmp; $j = Get-Content $tmp -Raw | ConvertFrom-Json
+    Assert ($j.model -eq 'x' -and $j.env.A -eq '1' -and $j.env.KEEP_UNLOCKED_MODE -eq 'manual' -and
+            @($j.permissions.allow).Count -eq 1 -and $j.permissions.allow[0] -eq 'a') 'Set-Mode keeps other keys'
+    Assert ((Set-Mode 'manual' $tmp) -eq 'mode: manual') 'Set-Mode unchanged'
+    [IO.File]::WriteAllText($tmp, '{broken')
+    Assert ((Set-Mode 'manual' $tmp) -like '*not changed*' -and [IO.File]::ReadAllText($tmp) -eq '{broken') 'Set-Mode broken JSON'
+    Remove-Item $tmp
     'ok'
 }
 
@@ -176,11 +218,13 @@ switch ($Cmd) {
         exit 0
     }
     'on' {
-        $m = @(Get-Keepers (Get-ProcTable) | Where-Object { $_.mode -eq 'manual' })
-        if ($m.Count) { 'already running: ' + (Format-Keeper $m[0]) } else { Start-Keeper 'manual' 0 $true }
+        $f = @(Get-AllKeepers (Get-ProcTable))
+        # auto keepers end with their session, so only a manual or untracked one makes a new keeper unnecessary
+        foreach ($r in $f) { $(if ($r.mode -ne 'auto') { 'already running: ' } else { 'running: ' }) + (Format-Keeper $r) }
+        if (-not @($f | Where-Object { $_.mode -ne 'auto' }).Count) { Start-Keeper 'manual' 0 $true }
     }
     'off' {
-        $f = @(Get-Keepers (Get-ProcTable))
+        $f = @(Get-AllKeepers (Get-ProcTable))
         foreach ($r in $f) {
             Stop-Process -Id $r.pid -Force -ErrorAction SilentlyContinue
             Remove-Item (Join-Path $State "$($r.pid).json") -ErrorAction SilentlyContinue
@@ -189,10 +233,11 @@ switch ($Cmd) {
         Get-ScheduledTask -TaskPath $TaskPath -ErrorAction SilentlyContinue | ForEach-Object {
             Stop-ScheduledTask -InputObject $_ -ErrorAction SilentlyContinue; Remove-KeeperTask $_.TaskName }
         if (-not $f.Count) { 'no keeper running' }
+        Set-Mode 'manual'
     }
     'status' {
         "mode: $(Get-Mode)"
-        $f = @(Get-Keepers (Get-ProcTable))
+        $f = @(Get-AllKeepers (Get-ProcTable))
         $f | ForEach-Object { Format-Keeper $_ }
         if (-not $f.Count) { 'no keeper running' }
     }
