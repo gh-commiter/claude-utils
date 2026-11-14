@@ -7,7 +7,7 @@
   keep-unlocked.py status    lists running keepers.
 
 KEEP_UNLOCKED_MODE: "auto" (default) or "manual" (the hook does nothing).
-Keepers: macOS caffeinate, Linux systemd-inhibit. Windows uses keep-unlocked.ps1 instead of this script.
+Keepers: macOS bin/keep-unlocked-keeper (signed), Linux systemd-inhibit. Windows uses keep-unlocked.ps1 instead of this script.
 State: one JSON file per keeper in ~/.claude/keep-unlocked/; the mode is env.KEEP_UNLOCKED_MODE in ~/.claude/settings.json.
 """
 import json
@@ -24,17 +24,11 @@ SETTINGS = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
 SHELLS = {"sh", "bash", "zsh", "dash", "fish", "ksh", "cmd", "powershell", "pwsh", "python", "python3", "py", "env"}
 # only processes whose command line has one of these are this plugin's keepers
 MARKERS = ("caffeinate -dimsu", "--who=keep-unlocked")  # caffeinate -dimsu: keepers started before 0.2.1
-# macOS: caffeinate -dims keeps it awake, but the screen saver and its lock follow the HID idle timer, which neither
-# caffeinate -d nor -u resets. So a sh loop posts a real input event every 60 s, like the F15 press on Windows:
-# a mouse move to where the pointer already is (nothing visible; F15 would change the brightness on a Mac).
-# caffeinate -u -t 2 also turns the display on. A mouse move needs no permission (Accessibility or Automation);
-# a key press would need Accessibility.
-# TERM (off) and the end of caffeinate (Claude exited, -w) stop at once the loop and all its children (kill 0: own group).
-DARWIN_START = 'trap "trap - TERM; kill 0" TERM; (caffeinate -dims "$@"; kill 0) & '  # also how running() knows it
-DARWIN_MOVE = ('ObjC.import("CoreGraphics"); $.CGEventPost($.kCGHIDEventTap, $.CGEventCreateMouseEvent(null, '
-               '$.kCGEventMouseMoved, $.CGEventGetLocation($.CGEventCreate(null)), 0))')
-DARWIN_LOOP = (DARWIN_START + "while :; do caffeinate -u -t 2; osascript -l JavaScript -e '" + DARWIN_MOVE +
-               "' >/dev/null 2>&1; sleep 60 & wait $!; done")
+# macOS: bin/keep-unlocked-keeper, one Developer ID signed program that does all of it (sleep assertions, user
+# activity and a mouse move every 60 s, ends with -w pid); the Events permission is granted to it alone.
+# Without it: plain caffeinate (awake, but the screen saver may still lock).
+KEEPER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "keep-unlocked-keeper")
+DARWIN_START = 'trap "trap - TERM; kill 0" TERM; (caffeinate -dims "$@"; kill 0) & '  # 0.2.1-0.2.3 keepers
 
 
 def mode(env=os.environ):
@@ -93,7 +87,8 @@ def process_table():
 def keeper_cmd(system, claude_pid=None, which=shutil.which):
     """Command that keeps the machine awake; with claude_pid it exits when that process ends. None: unsupported."""
     if system == "Darwin":
-        return ["sh", "-c", DARWIN_LOOP, "keep-unlocked"] + (["-w", str(claude_pid)] if claude_pid else [])
+        prog = [KEEPER] if os.access(KEEPER, os.X_OK) else ["caffeinate", "-dimsu"]
+        return prog + (["-w", str(claude_pid)] if claude_pid else [])
     if system == "Linux" and which("systemd-inhibit"):
         wait = ["tail", f"--pid={claude_pid}", "-f", "/dev/null"] if claude_pid else ["sleep", "infinity"]
         return ["systemd-inhibit", "--what=idle:sleep", "--who=keep-unlocked", "--why=Claude Code", "--mode=block"] + wait
@@ -112,8 +107,8 @@ def running(rec, cmdline=command_line):
     line = cmdline(pid) or ""
     # the keeper program itself, not e.g. a shell whose command line mentions the marker
     prog = base(first_token(line))
-    return (prog in ("caffeinate", "systemd-inhibit") and any(m in line for m in MARKERS)
-            or prog == "sh" and DARWIN_START in line)  # 0.2.1 keepers too
+    return (prog == base(KEEPER) or prog in ("caffeinate", "systemd-inhibit") and any(m in line for m in MARKERS)
+            or prog == "sh" and DARWIN_START in line)  # 0.2.1-0.2.3 keepers too
 
 
 def keepers(state=STATE, alive=running):

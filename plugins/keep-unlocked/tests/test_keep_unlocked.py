@@ -16,8 +16,8 @@ assert ku.mode({"KEEP_UNLOCKED_MODE": " Manual "}) == "manual"
 assert ku.mode({"KEEP_UNLOCKED_MODE": "off"}) == "auto"
 
 # commands per platform
-assert ku.keeper_cmd("Darwin", 42) == ["sh", "-c", ku.DARWIN_LOOP, "keep-unlocked", "-w", "42"]
-assert ku.keeper_cmd("Darwin") == ["sh", "-c", ku.DARWIN_LOOP, "keep-unlocked"]
+assert ku.keeper_cmd("Darwin", 42) == [ku.KEEPER, "-w", "42"]  # the signed keeper is in the repo
+assert ku.keeper_cmd("Darwin") == [ku.KEEPER]
 assert ku.keeper_cmd("Windows", 42) is None  # Windows runs keep-unlocked.ps1
 has = lambda name: "/usr/bin/" + name
 assert ku.keeper_cmd("Linux", 42, has)[-4:] == ["tail", "--pid=42", "-f", "/dev/null"]
@@ -45,9 +45,9 @@ assert ku.find_claude({100: (100, "sh", "sh")}, 100) == (None, False)  # loop sa
 
 # running: only a keeper's own command line counts, not a reused pid or a record without pid
 assert ku.running({"pid": 5, "cmd": "caffeinate"}, lambda pid: "caffeinate -dimsu -w 9")
-assert ku.running({"pid": 5}, lambda pid: " ".join(ku.keeper_cmd("Darwin", 9)))  # ps shows the sh loop like this
+assert ku.running({"pid": 5}, lambda pid: " ".join(ku.keeper_cmd("Darwin", 9)))
+assert ku.running({"pid": 5}, lambda pid: "sh -c " + ku.DARWIN_START + "while :; do sleep 60; done")  # 0.2.1-0.2.3
 assert not ku.running({"pid": 5}, lambda pid: "sh -c caffeinate -dims")  # another shell
-assert "kCGEventMouseMoved" in ku.DARWIN_LOOP and "caffeinate -u -t 2" in ku.DARWIN_LOOP and "sleep 60" in ku.DARWIN_LOOP
 assert ku.running({"pid": 5}, lambda pid: "systemd-inhibit --what=idle:sleep --who=keep-unlocked --why=x tail")
 assert not ku.running({"pid": 5, "cmd": "caffeinate"}, lambda pid: "caffeinate -i make")
 assert not ku.running({"pid": 5}, lambda pid: "")  # gone
@@ -78,7 +78,7 @@ assert os.listdir(state) == [], os.listdir(state)
 tbl = {7: (1, "caffeinate", "caffeinate -dimsu"), 8: (1, "caffeinate", "caffeinate -dimsu -w 3"),
        9: (1, "caffeinate", "caffeinate -i make"), 10: (1, "zsh", "zsh -c 'caffeinate -dimsu'")}
 assert ku.untracked(tbl, {8}) == [{"pid": 7, "mode": "unknown", "cmd": "caffeinate"}], ku.untracked(tbl, {8})
-loop = " ".join(["sh", "-c", ku.DARWIN_LOOP, "keep-unlocked"])  # sh keeper and its forked subshell (same args)
+loop = "sh -c " + ku.DARWIN_START + "while :; do sleep 60; done keep-unlocked"  # old sh keeper and its subshell
 tbl = {20: (1, "sh", loop), 21: (20, "sh", loop), 30: (1, "sh", loop), 31: (30, "sh", loop)}
 assert [r["pid"] for r in ku.untracked(tbl, {30})] == [20], ku.untracked(tbl, {30})
 
