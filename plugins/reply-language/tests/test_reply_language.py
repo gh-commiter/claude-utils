@@ -59,6 +59,13 @@ assert rl.foreign("Skladbo je napisal Dvořák, ki je bil češki skladatelj, in
 assert rl.foreign("Přepíšu skript s dynamickým SQL přes databáze.", {"sl", "en", "cs"}) is None  # uporabnik piše češko
 assert rl.foreign(sl[:300] + "Ovo je ćevapčići, đak i ćuk sjedi.", {"sl", "en"}) == "hr"
 assert rl.foreign(sl[:300] + "Это просто тест на русском языке.", {"sl", "en"}) == "other"  # pisava zunaj abecede
+# ženski spol v 1. osebi (seja je slovenska)
+for msg in ("Datoteko sem preverila in popravila napako.", "Preverila sem datoteko.", "Tega nisem videla."):
+    fem = run("stop", {"session_id": session, "last_assistant_message": msg})
+    assert fem.returncode == 2 and "masculine" in fem.stderr, (msg, fem)
+for msg in ("Datoteko sem preveril in popravil napako.", "Sem preveril pravila za hook.", "Pravila sem dodal v datoteko.",
+            "Napisal sem `sem preverila` kot primer.", "Ta pravila bom uredil jutri."):
+    assert run("stop", {"session_id": session, "last_assistant_message": msg}).returncode == 0, msg
 # citiran tuji odgovor ne spremeni jezika seje
 assert rl.detect("zakaj hook ne ujame tega tvojega sranja ... '" + cz + "'") == "sl"
 assert rl.detect("Proč to nefunguje, když je všechno správně?") == "cs"

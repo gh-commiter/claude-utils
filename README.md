@@ -26,7 +26,8 @@ Code's default hook shell there.
 - **UserPromptSubmit**: detects the language of the prompt (short prompts keep the previous one) and tells Claude
   to reply and think in it. In Slovenian, Czech, Slovak and Croatian, Claude refers to itself in the masculine
   ("sem naredil").
-- **Stop**: when the visible reply is clearly in another language, Claude writes it again. Each paragraph is
+- **Stop**: when the visible reply is clearly in another language, or (Slovenian) Claude uses the feminine for
+  itself ("sem preverila"), Claude writes it again. Each paragraph is
   judged separately; three or more words with letters outside the allowed languages' alphabets (ř ů ý, Cyrillic,
   ...) are enough. Code, inline code, quotes in the prompt, paths and URLs are not counted. Thinking is not checked.
 

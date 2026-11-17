@@ -19,6 +19,9 @@ foreach ($kv in ('sl', 'Slovenian'), ('en', 'English'), ('cs', 'Czech'), ('sk', 
 # languages that show the speaker's gender: Claude refers to itself in the masculine (example: masculine, not feminine)
 $Self = @{ sl = "'sem naredil', not 'sem naredila'"; cs = "'udělal jsem', not 'udělala jsem'"
            sk = "'urobil som', not 'urobila som'"; hr = "'napravio sam', not 'napravila sam'" }
+# Slovenian, 1st person feminine: 'sem preverila', 'nisem videla', 'Preverila sem'. A word in between ending in -l is a
+# masculine participle ('sem preveril pravila'); a participle after '-la sem' means a noun ('Pravila sem dodal')
+$Feminine = '(?i)\b(?:sem|bom|nisem)\s+(?:[\p{L}\p{N}_]*[^\W\p{N}_l]\s+)?[\p{L}\p{N}_]{3,}la\b|\b[\p{L}\p{N}_]{3,}la\s+(?:sem|bom)\b(?!\s+[\p{L}\p{N}_]+l\b)'
 # letters besides a-z that a language has (compared lower case)
 $Alphabets = @{ sl = 'čšž'; en = ''; cs = 'áčďéěíňóřšťúůýž'; sk = 'áäčďéíĺľňóôŕšťúýž'; hr = 'čćđšž'; de = 'äöüß' }
 # always allowed; besides them only the language of the user's prompt
@@ -223,6 +226,16 @@ function Invoke-Stop($data) {
     # each block separately: a foreign paragraph inside a longer turn in the user's language is not diluted
     $other = $null
     foreach ($t in $texts) { $other = Get-Foreign $t $permitted; if ($other) { break } }
+    if ($lang -ceq 'sl' -and -not $other) {
+        foreach ($t in $texts) {
+            $m = [regex]::Match([regex]::Replace((Strip-Code $t), $Quoted, ' '), $Feminine)
+            if ($m.Success) {
+                [Console]::Error.Write("The reply uses the feminine for yourself (`"$($m.Value)`"). Write the last reply again " +
+                    "with the masculine (sem preveril, bom naredil), without apologizing or explaining why.`r`n")
+                return 2
+            }
+        }
+    }
     if ($other) {
         $want = if ($Names.ContainsKey($lang)) { $Names[$lang] } else { $Names[$Allowed[0]] }
         $otherName = if ($Names.ContainsKey($other)) { $Names[$other] } else { 'another language' }
@@ -283,6 +296,15 @@ function Invoke-SelfTest {
     Assert ((Get-Foreign ($sl.Substring(0, 300) + 'Ovo je ćevapčići, đak i ćuk sjedi.') @('sl', 'en')) -ceq 'hr') 'Croatian letters'
     Assert ((Get-Foreign ($sl.Substring(0, 300) + 'Это просто тест на русском языке.') @('sl', 'en')) -ceq 'other') 'outside the alphabet'
     Assert ($null -eq (Get-Foreign 'Skladbo je napisal Dvořák, ki je bil češki skladatelj, in to je zdaj tudi v tej datoteki prav, kot je treba.' @('sl', 'en'))) 'names are fine'
+    # 1st person feminine (the session is Slovenian)
+    foreach ($msg in 'Datoteko sem preverila in popravila napako.', 'Preverila sem datoteko.', 'Tega nisem videla.') {
+        $fem = Run 'stop' @{ session_id = $session; last_assistant_message = $msg }
+        Assert ($fem.code -eq 2 -and $fem.err -match 'masculine') "feminine: $msg $($fem.code)"
+    }
+    foreach ($msg in 'Datoteko sem preveril in popravil napako.', 'Sem preveril pravila za hook.', 'Pravila sem dodal v datoteko.',
+                     'Napisal sem `sem preverila` kot primer.', 'Ta pravila bom uredil jutri.') {
+        Assert ((Run 'stop' @{ session_id = $session; last_assistant_message = $msg }).code -eq 0) "masculine ok: $msg"
+    }
     # a quoted foreign reply does not change the session language
     Assert ((Get-Language ("zakaj hook ne ujame tega tvojega sranja ... '" + $cz + "'")) -ceq 'sl') 'detect without quotes'
     $sw = [Diagnostics.Stopwatch]::StartNew()

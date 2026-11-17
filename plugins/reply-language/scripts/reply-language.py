@@ -19,6 +19,9 @@ NAMES = {"sl": "Slovenian", "en": "English", "cs": "Czech", "sk": "Slovak", "hr"
 # jeziki, v katerih se vidi spol govorca: Claude o sebi v moškem spolu (primer: moška, ne ženska oblika)
 SELF = {"sl": "'sem naredil', not 'sem naredila'", "cs": "'udělal jsem', not 'udělala jsem'",
         "sk": "'urobil som', not 'urobila som'", "hr": "'napravio sam', not 'napravila sam'"}
+# slovenščina, 1. oseba v ženskem spolu: "sem preverila", "nisem videla", "Preverila sem". Vmesna beseda na -l je
+# moški deležnik ("sem preveril pravila"), za "-la sem" sledeči deležnik pomeni samostalnik ("Pravila sem dodal")
+FEMININE = re.compile(r"\b(?:sem|bom|nisem)\s+(?:\w*[^\Wl\d_]\s+)?\w{3,}la\b|\b\w{3,}la\s+(?:sem|bom)\b(?!\s+\w+l\b)", re.I)
 # črke poleg a-z, ki jih jezik ima (velike se primerjajo kot male)
 ALPHABETS = {"sl": set("čšž"), "en": set(), "cs": set("áčďéěíňóřšťúůýž"), "sk": set("áäčďéíĺľňóôŕšťúýž"),
              "hr": set("čćđšž"), "de": set("äöüß")}
@@ -167,6 +170,12 @@ def on_stop(data):
     allowed = set(ALLOWED) | {lang}
     # vsak blok posebej: tuj odstavek sredi daljšega slovenskega dela poteze se ne razredči
     other = next(filter(None, (foreign(t, allowed) for t in texts)), None)
+    if lang == "sl" and not other:
+        fem = next(filter(None, (FEMININE.search(QUOTED.sub(" ", strip_code(t))) for t in texts)), None)
+        if fem:
+            sys.stderr.write(f"The reply uses the feminine for yourself (\"{fem.group(0)}\"). Write the last reply again "
+                             "with the masculine (sem preveril, bom naredil), without apologizing or explaining why.\n")
+            return 2
     if other:
         want = NAMES.get(lang, NAMES[ALLOWED[0]])
         sys.stderr.write(f"The reply is in {NAMES.get(other, 'another language')}. Only {', '.join(NAMES[k] for k in ALLOWED)} or the user's language ({want}) "
