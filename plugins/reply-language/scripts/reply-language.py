@@ -128,6 +128,12 @@ def on_prompt(data):
 
 def foreign(text, allowed):
     """Tuji jezik, v katerem je besedilo jasno napisano, ali None (posamezne tuje besede in imena so dovoljeni)."""
+    # črke, ki jih slovenščina nima (ě ř ů ý á í …): 3 ali več takih besed je tuj stavek, tudi sredi slovenskega
+    # odstavka, kjer bi ga štetje besed razredčilo; eno ali dve imeni (Dvořák) sta dovoljeni
+    words = re.findall(r"[^\W\d_]+", strip_code(text))
+    for k, rx in list(CHARS.items()) + [("cs", SHARED)]:
+        if k not in allowed and sum(bool(rx.search(w)) for w in words) >= 3:
+            return k
     s, _ = scores(text)
     s["cs"] += len(SHARED.findall(strip_code(text)))
     s["sk"] += len(SHARED.findall(strip_code(text)))

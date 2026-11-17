@@ -172,6 +172,12 @@ function Invoke-Prompt($data) {
 
 # Foreign language the text is clearly written in, or $null (single foreign words or names are fine)
 function Get-Foreign([string]$text, $permitted) {
+    # letters Slovenian does not have (ě ř ů ý á í ...): 3 or more such words are a foreign sentence, even inside a
+    # Slovenian paragraph where counting words would dilute it; one or two names (Dvořák) are fine
+    $words = @([regex]::Matches((Strip-Code $text), '[\p{L}\p{Nl}\p{No}]+') | ForEach-Object { $_.Value })
+    foreach ($kv in @($Chars.GetEnumerator() | ForEach-Object { , @($_.Key, $_.Value) }) + , @('cs', $Shared)) {
+        if ($permitted -cnotcontains $kv[0] -and @($words | Where-Object { $_ -cmatch $kv[1] }).Count -ge 3) { return $kv[0] }
+    }
     $s = Get-Scores $text
     $n = [regex]::Matches((Strip-Code $text), $Shared).Count
     $s['cs'] += $n; $s['sk'] += $n
@@ -256,6 +262,9 @@ function Invoke-SelfTest {
     $bad = Run 'stop' @{ session_id = $session; transcript_path = $tr; last_assistant_message = $sl }
     Assert ($bad.code -eq 2 -and $bad.err -match 'Czech') "stop per block: $($bad.code) $($bad.err)"
     Remove-Item $tr
+    # a Czech sentence inside a Slovenian paragraph: letters Slovenian does not have
+    Assert ((Get-Foreign ($sl.Substring(0, 300) + 'Přepíšu skript na kurzor s dynamickým SQL přes všechny tyto databáze.') @('sl', 'en')) -ceq 'cs') 'foreign letters'
+    Assert ($null -eq (Get-Foreign 'Skladbo je napisal Dvořák, ki je bil češki skladatelj, in to je zdaj tudi v tej datoteki prav, kot je treba.' @('sl', 'en'))) 'names are fine'
     # a quoted foreign reply does not change the session language
     Assert ((Get-Language ("zakaj hook ne ujame tega tvojega sranja ... '" + $cz + "'")) -ceq 'sl') 'detect without quotes'
     $sw = [Diagnostics.Stopwatch]::StartNew()

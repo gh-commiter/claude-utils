@@ -51,6 +51,10 @@ with open(tr, "w", encoding="utf-8") as f:
 bad = run("stop", {"session_id": session, "transcript_path": tr, "last_assistant_message": sl})
 assert bad.returncode == 2 and "Czech" in bad.stderr, bad
 os.remove(tr)
+# češki stavek sredi slovenskega odstavka: črke, ki jih slovenščina nima
+assert rl.foreign(sl[:300] + "Přepíšu skript na kurzor s dynamickým SQL přes všechny tyto databáze.", {"sl", "en"}) == "cs"
+assert rl.foreign("Skladbo je napisal Dvořák, ki je bil češki skladatelj, in to je zdaj tudi v tej datoteki prav, kot je treba.", {"sl", "en"}) is None  # imena
+assert rl.foreign("Přepíšu skript s dynamickým SQL přes databáze.", {"sl", "en", "cs"}) is None  # uporabnik piše češko
 # citiran tuji odgovor ne spremeni jezika seje
 assert rl.detect("zakaj hook ne ujame tega tvojega sranja ... '" + cz + "'") == "sl"
 assert rl.detect("Proč to nefunguje, když je všechno správně?") == "cs"
