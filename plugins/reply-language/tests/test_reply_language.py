@@ -33,8 +33,27 @@ assert run("stop", {"session_id": session, "last_assistant_message": "This is th
 bad = run("stop", {"session_id": session, "last_assistant_message": "Ovo je hook koji provjerava što će biti, jer sada treba ovdje."})
 assert bad.returncode == 2 and "Croatian" in bad.stderr, bad
 assert run("stop", {"session_id": session, "last_assistant_message": "This is the hook that checks it."}, allowed="sl").returncode == 2  # en ni dovoljen
-assert run("stop", {"session_id": session, "stop_hook_active": True,  # le en popravek
-                    "last_assistant_message": "Ovo je hook koji provjerava što će biti, jer sada treba ovdje."}).returncode == 0
+# stop_hook_active (tudi zaradi drugega vtičnika): oceni se zadnje sporočilo, ne preskoči
+assert run("stop", {"session_id": session, "stop_hook_active": True,
+                    "last_assistant_message": "Ovo je hook koji provjerava što će biti, jer sada treba ovdje."}).returncode == 2
+assert run("stop", {"session_id": session, "stop_hook_active": True,
+                    "last_assistant_message": "Popravljeno, zdaj deluje."}).returncode == 0
+# češki odstavek sredi dolge slovenske poteze se ne razredči
+cz = ("Všechny potomky mají `NePrikaziKotDogodek = 0`, takže ani tento příznak neodliší událost od číselníku. "
+      "Nebudu to odhadovat: strom uložím do KB jako „číselníky, které používají pole“, bez třídění.")
+sl = "Zdaj je to narejeno, ker je treba, da se to lahko preveri in da je prav. " * 10
+tr = os.path.join(tempfile.gettempdir(), f"claude-reply-language-transcript-{os.getpid()}.jsonl")
+with open(tr, "w", encoding="utf-8") as f:
+    for o in ({"type": "user", "message": {"content": "zakaj"}},
+              {"type": "assistant", "message": {"content": [{"type": "text", "text": cz}]}},
+              {"type": "assistant", "message": {"content": [{"type": "text", "text": sl}]}}):
+        f.write(json.dumps(o) + "\n")
+bad = run("stop", {"session_id": session, "transcript_path": tr, "last_assistant_message": sl})
+assert bad.returncode == 2 and "Czech" in bad.stderr, bad
+os.remove(tr)
+# citiran tuji odgovor ne spremeni jezika seje
+assert rl.detect("zakaj hook ne ujame tega tvojega sranja ... '" + cz + "'") == "sl"
+assert rl.detect("Proč to nefunguje, když je všechno správně?") == "cs"
 t = time.perf_counter()
 assert rl.strip_code("a/b " + "x" * 20000 + " c") == "  " + "x" * 20000 + " c"
 assert time.perf_counter() - t < 0.5  # linearno, ne kvadratno (prej več sekund)

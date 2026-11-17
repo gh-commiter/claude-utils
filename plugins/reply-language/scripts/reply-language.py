@@ -55,10 +55,14 @@ def scores(text):
     return s, len(words)
 
 
+# navedki (vsaj 15 znakov): uporabnik pogosto citira Claudov tuji odgovor, to ni njegov jezik
+QUOTED = re.compile(r"'[^'\n]{15,}'|\"[^\"\n]{15,}\"|„[^“\n]{15,}“|“[^”\n]{15,}”|«[^»\n]{15,}»|»[^«\n]{15,}«")
+
+
 def own_words(text):
-    """Uporabnikovo besedilo brez prilepljenih izpisov, obvestil in izhoda ukazov (<tag>…</tag>)."""
+    """Uporabnikovo besedilo brez prilepljenih izpisov, obvestil, izhoda ukazov (<tag>…</tag>) in navedkov."""
     text = re.sub(r"<([A-Za-z][\w-]*)[^>]*>.*?</\1>", " ", text, flags=re.S)
-    return re.sub(r"<[^>]+>", " ", text)
+    return QUOTED.sub(" ", re.sub(r"<[^>]+>", " ", text))
 
 
 def detect(text):
@@ -85,7 +89,7 @@ def user_text(o):
 
 
 def last_turn(path):
-    """Besedilo asistenta od zadnjega pravega uporabnikovega sporočila."""
+    """Besedila asistenta (vsak blok posebej) od zadnjega pravega uporabnikovega sporočila."""
     texts = []
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -99,7 +103,7 @@ def last_turn(path):
                 content = (o.get("message") or {}).get("content")
                 if isinstance(content, list):
                     texts += [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
-    return "\n".join(texts)
+    return texts
 
 
 def on_prompt(data):
@@ -122,34 +126,37 @@ def on_prompt(data):
     return 0
 
 
+def foreign(text, allowed):
+    """Tuji jezik, v katerem je besedilo jasno napisano, ali None (posamezne tuje besede in imena so dovoljeni)."""
+    s, _ = scores(text)
+    s["cs"] += len(SHARED.findall(strip_code(text)))
+    s["sk"] += len(SHARED.findall(strip_code(text)))
+    other, hits = max(((k, v) for k, v in s.items() if k not in allowed), key=lambda kv: kv[1], default=(None, 0))
+    return other if other and hits >= 4 and hits > max(s[k] for k in allowed if k in s) else None
+
+
 def on_stop(data):
-    # le en popravek: povratna informacija hooka je v prepisu isMeta, zato bi se prvi tuji odgovor ocenjeval znova
-    if data.get("stop_hook_active"):
-        return 0
     try:
         lang = open(state_file(data.get("session_id", "default"))).read().strip()
     except OSError:
         lang = ALLOWED[0]
-    text = data.get("last_assistant_message") or ""
-    if data.get("transcript_path"):
+    texts = [data.get("last_assistant_message") or ""]
+    # stop_hook_active: Claude nadaljuje zaradi Stop hooka (tega ali drugega vtičnika). Prepis vsebuje še zavrnjeni
+    # tuji odgovor, zato se oceni le zadnje sporočilo; prej se je preverjanje takrat preskočilo in tuj odgovor je ušel.
+    if data.get("transcript_path") and not data.get("stop_hook_active"):
         try:
-            text = last_turn(data["transcript_path"]) or text
+            texts = last_turn(data["transcript_path"]) or texts
         except OSError:
             pass
-    s, _ = scores(text)
-    s["cs"] += len(SHARED.findall(strip_code(text)))
-    s["sk"] += len(SHARED.findall(strip_code(text)))
     allowed = set(ALLOWED) | {lang}
-    other, hits = max(((k, v) for k, v in s.items() if k not in allowed), key=lambda kv: kv[1], default=(None, 0))
-    ok = max(s[k] for k in allowed if k in s)
-    # le jasen primer: posamezne tuje besede ali imena v odgovoru so dovoljeni
-    if other and hits >= 4 and hits > ok:
+    # vsak blok posebej: tuj odstavek sredi daljšega slovenskega dela poteze se ne razredči
+    other = next(filter(None, (foreign(t, allowed) for t in texts)), None)
+    if other:
         want = NAMES.get(lang, NAMES[ALLOWED[0]])
         sys.stderr.write(f"The reply is in {NAMES[other]}. Only {', '.join(NAMES[k] for k in ALLOWED)} or the user's language ({want}) "
                          f"are allowed. Write the last reply again in {want}, without apologizing or explaining why.\n")
         return 2
     return 0
-
 
 if __name__ == "__main__":
     data = json.load(sys.stdin)

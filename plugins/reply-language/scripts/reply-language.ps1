@@ -68,10 +68,13 @@ function Get-Scores([string]$text) {
     $s
 }
 
-# The user's own text without pasted output, notices and command output (<tag>...</tag>)
+# quotes (at least 15 characters): the user often quotes Claude's foreign reply, that is not the user's language
+$Quoted = '''[^''\n]{15,}''|"[^"\n]{15,}"|„[^“\n]{15,}“|“[^”\n]{15,}”|«[^»\n]{15,}»|»[^«\n]{15,}«'
+
+# The user's own text without pasted output, notices, command output (<tag>...</tag>) and quotes
 function Get-OwnWords([string]$t) {
     $t = [regex]::Replace($t, '(?s)<([A-Za-z][\p{L}\p{N}_-]*)[^>]*>.*?</\1>', ' ')
-    [regex]::Replace($t, '<[^>]+>', ' ')
+    [regex]::Replace([regex]::Replace($t, '<[^>]+>', ' '), $Quoted, ' ')
 }
 
 # Language of the user's text, or $null (too few words: keep the previous one).
@@ -124,7 +127,7 @@ function Get-UserText($o) {
     @(Get-Texts $c) -join "`n"
 }
 
-# Assistant text since the last real user message. Parsed from the end back to that message: same result as the
+# Assistant text blocks (each separately) since the last real user message. Parsed from the end back to that message: same result as the
 # .py's forward pass, but only the last turn is parsed (transcripts reach 100 MB)
 function Get-LastTurn([IO.StreamReader]$r) {
     $lines = [Collections.Generic.List[string]]::new()
@@ -142,7 +145,7 @@ function Get-LastTurn([IO.StreamReader]$r) {
             if ($c -is [Array]) { $texts.InsertRange(0, [string[]]@(Get-Texts $c)) }
         }
     }
-    $texts -join "`n"
+    , $texts.ToArray()
 }
 
 function Get-Field($data, [string]$key, [string]$default) {
@@ -167,32 +170,40 @@ function Invoke-Prompt($data) {
     0
 }
 
+# Foreign language the text is clearly written in, or $null (single foreign words or names are fine)
+function Get-Foreign([string]$text, $permitted) {
+    $s = Get-Scores $text
+    $n = [regex]::Matches((Strip-Code $text), $Shared).Count
+    $s['cs'] += $n; $s['sk'] += $n
+    $other = $null; $hits = 0
+    foreach ($k in $Codes) {
+        if ($permitted -cnotcontains $k -and ($null -eq $other -or $s[$k] -gt $hits)) { $other = $k; $hits = $s[$k] } }
+    $ok = 0  # scores are never negative
+    foreach ($k in $permitted) { if ($s.ContainsKey($k) -and $s[$k] -gt $ok) { $ok = $s[$k] } }
+    if ($other -and $hits -ge 4 -and $hits -gt $ok) { $other } else { $null }
+}
+
 function Invoke-Stop($data) {
-    # one rewrite only: the hook's feedback is isMeta in the transcript, so the first foreign reply would count again
-    if (Test-Truthy $data['stop_hook_active']) { return 0 }
     try { $lang = [IO.File]::ReadAllText((Get-StateFile (Get-Field $data 'session_id' 'default'))).Trim() } catch { $lang = $Allowed[0] }
     $text = $data['last_assistant_message']
     if (-not (Test-Truthy $text)) { $text = '' }
-    if (Test-Truthy $data['transcript_path']) {
+    $texts = @($text)
+    # stop_hook_active: Claude continues because of a Stop hook (this or another plugin's). The transcript still holds
+    # the rejected foreign reply, so only the last message is judged; skipping the check let foreign replies through.
+    if ((Test-Truthy $data['transcript_path']) -and -not (Test-Truthy $data['stop_hook_active'])) {
         $r = $null
         try {  # shared like Python's open(), so Claude Code can keep appending to the transcript
             $f = [IO.FileStream]::new([string]$data['transcript_path'], [IO.FileMode]::Open, [IO.FileAccess]::Read,
                                       [IO.FileShare]'ReadWrite, Delete')
             $r = [IO.StreamReader]::new($f, [Text.UTF8Encoding]::new($false, $true), $false)
         } catch {}
-        if ($r) { $t = Get-LastTurn $r; if ($t) { $text = $t } }
+        if ($r) { $t = @(Get-LastTurn $r); if ($t.Count) { $texts = $t } }
     }
-    $s = Get-Scores $text
-    $n = [regex]::Matches((Strip-Code $text), $Shared).Count
-    $s['cs'] += $n; $s['sk'] += $n
     $permitted = @($Allowed) + $lang
-    $other = $null; $hits = 0
-    foreach ($k in $Codes) {
-        if ($permitted -cnotcontains $k -and ($null -eq $other -or $s[$k] -gt $hits)) { $other = $k; $hits = $s[$k] } }
-    $ok = 0  # scores are never negative
-    foreach ($k in $permitted) { if ($s.ContainsKey($k) -and $s[$k] -gt $ok) { $ok = $s[$k] } }
-    # only a clear case: single foreign words or names in a reply are fine
-    if ($other -and $hits -ge 4 -and $hits -gt $ok) {
+    # each block separately: a foreign paragraph inside a longer turn in the user's language is not diluted
+    $other = $null
+    foreach ($t in $texts) { $other = Get-Foreign $t $permitted; if ($other) { break } }
+    if ($other) {
         $want = if ($Names.ContainsKey($lang)) { $Names[$lang] } else { $Names[$Allowed[0]] }
         [Console]::Error.Write("The reply is in $($Names[$other]). Only $(@($Allowed | ForEach-Object { $Names[$_] }) -join ', ') " +
             "or the user's language ($want) are allowed. Write the last reply again in $want, without apologizing or explaining why.`r`n")
@@ -228,8 +239,25 @@ function Invoke-SelfTest {
     $bad = Run 'stop' @{ session_id = $session; last_assistant_message = 'Ovo je hook koji provjerava što će biti, jer sada treba ovdje.' }
     Assert ($bad.code -eq 2 -and $bad.err -match 'Croatian') "stop hr: $($bad.code) $($bad.err)"
     Assert ((Run 'stop' @{ session_id = $session; last_assistant_message = 'This is the hook that checks it.' } 'sl').code -eq 2) 'stop en not allowed'
+    # stop_hook_active (also from another plugin): the last message is judged, not skipped
     Assert ((Run 'stop' @{ session_id = $session; stop_hook_active = $true
-                          last_assistant_message = 'Ovo je hook koji provjerava što će biti, jer sada treba ovdje.' }).code -eq 0) 'one rewrite only'
+                          last_assistant_message = 'Ovo je hook koji provjerava što će biti, jer sada treba ovdje.' }).code -eq 2) 'stop_hook_active judges'
+    Assert ((Run 'stop' @{ session_id = $session; stop_hook_active = $true
+                          last_assistant_message = 'Popravljeno, zdaj deluje.' }).code -eq 0) 'stop_hook_active ok'
+    # a Czech paragraph inside a long Slovenian turn is not diluted
+    $cz = 'Všechny potomky mají `NePrikaziKotDogodek = 0`, takže ani tento příznak neodliší událost od číselníku. ' +
+          'Nebudu to odhadovat: strom uložím do KB jako „číselníky, které používají pole“, bez třídění.'
+    $sl = 'Zdaj je to narejeno, ker je treba, da se to lahko preveri in da je prav. ' * 10
+    $tr = [IO.Path]::Combine([IO.Path]::GetTempPath(), "claude-reply-language-transcript-$PID.jsonl")
+    [IO.File]::WriteAllText($tr, (@(@{ type = 'user'; message = @{ content = 'zakaj' } },
+        @{ type = 'assistant'; message = @{ content = @(@{ type = 'text'; text = $cz }) } },
+        @{ type = 'assistant'; message = @{ content = @(@{ type = 'text'; text = $sl }) } }) |
+        ForEach-Object { $Json.Serialize($_) }) -join "`n")
+    $bad = Run 'stop' @{ session_id = $session; transcript_path = $tr; last_assistant_message = $sl }
+    Assert ($bad.code -eq 2 -and $bad.err -match 'Czech') "stop per block: $($bad.code) $($bad.err)"
+    Remove-Item $tr
+    # a quoted foreign reply does not change the session language
+    Assert ((Get-Language ("zakaj hook ne ujame tega tvojega sranja ... '" + $cz + "'")) -ceq 'sl') 'detect without quotes'
     $sw = [Diagnostics.Stopwatch]::StartNew()
     Assert ((Strip-Code ('a/b ' + 'x' * 20000 + ' c')) -ceq ('  ' + 'x' * 20000 + ' c')) 'strip paths'
     Assert ($sw.ElapsedMilliseconds -lt 500) 'strip is linear'
