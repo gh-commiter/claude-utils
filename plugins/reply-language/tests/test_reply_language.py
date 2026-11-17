@@ -28,6 +28,8 @@ def run(mode, data, allowed="sl,en"):
 session = f"test-{os.getpid()}"
 p = run("prompt", {"session_id": session, "prompt": "kaj je to in zakaj ne deluje"})
 assert "Slovenian" in p.stdout, p.stdout
+assert "masculine" in json.loads(p.stdout)["hookSpecificOutput"]["additionalContext"], p.stdout
+assert "masculine" not in run("prompt", {"session_id": session + "-en", "prompt": "can you check what this hook does"}).stdout
 assert run("stop", {"session_id": session, "last_assistant_message": "To je hook, ki preverja jezik in ga lahko nastaviš."}).returncode == 0
 assert run("stop", {"session_id": session, "last_assistant_message": "This is the hook that checks the reply."}).returncode == 0
 bad = run("stop", {"session_id": session, "last_assistant_message": "Ovo je hook koji provjerava što će biti, jer sada treba ovdje."})
@@ -64,4 +66,5 @@ t = time.perf_counter()
 assert rl.strip_code("a/b " + "x" * 20000 + " c") == "  " + "x" * 20000 + " c"
 assert time.perf_counter() - t < 0.5  # linearno, ne kvadratno (prej več sekund)
 os.remove(os.path.join(tempfile.gettempdir(), f"claude-reply-language-{session}"))
+os.remove(os.path.join(tempfile.gettempdir(), f"claude-reply-language-{session}-en"))
 print("ok")

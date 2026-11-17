@@ -16,6 +16,9 @@ $Codes = 'sl', 'en', 'cs', 'sk', 'hr', 'de'  # order of the .py dicts: ties go t
 $Names = [Collections.Generic.Dictionary[string, string]]::new()
 foreach ($kv in ('sl', 'Slovenian'), ('en', 'English'), ('cs', 'Czech'), ('sk', 'Slovak'), ('hr', 'Croatian'), ('de', 'German')) {
     $Names[$kv[0]] = $kv[1] }
+# languages that show the speaker's gender: Claude refers to itself in the masculine (example: masculine, not feminine)
+$Self = @{ sl = "'sem naredil', not 'sem naredila'"; cs = "'udělal jsem', not 'udělala jsem'"
+           sk = "'urobil som', not 'urobila som'"; hr = "'napravio sam', not 'napravila sam'" }
 # letters besides a-z that a language has (compared lower case)
 $Alphabets = @{ sl = 'čšž'; en = ''; cs = 'áčďéěíňóřšťúůýž'; sk = 'áäčďéíĺľňóôŕšťúýž'; hr = 'čćđšž'; de = 'äöüß' }
 # always allowed; besides them only the language of the user's prompt
@@ -167,7 +170,7 @@ function Invoke-Prompt($data) {
         $name = $Names[$lang]
         [Console]::Out.Write('{"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": ' +
             "`"The user writes in $name. Write every reply to the user in $name, and do your thinking in $name too. " +
-            "Code, commands and quoted text stay as they are.`"}}`r`n")
+            "Code, commands and quoted text stay as they are.$(if ($Self.ContainsKey($lang)) { " Refer to yourself in the masculine grammatical gender ($($Self[$lang]))." })`"}}`r`n")
     }
     0
 }
@@ -252,6 +255,7 @@ function Invoke-SelfTest {
     $session = "test-$PID"
     $p = Run 'prompt' @{ session_id = $session; prompt = 'kaj je to in zakaj ne deluje' }
     Assert ($p.out -match 'Slovenian') "prompt: $($p.out) $($p.err)"
+    Assert ($p.out -match 'masculine' -and ($Json.DeserializeObject($p.out)) -ne $null) "prompt masculine: $($p.out)"
     Assert ((Run 'stop' @{ session_id = $session; last_assistant_message = 'To je hook, ki preverja jezik in ga lahko nastaviš.' }).code -eq 0) 'stop sl'
     Assert ((Run 'stop' @{ session_id = $session; last_assistant_message = 'This is the hook that checks the reply.' }).code -eq 0) 'stop en'
     $bad = Run 'stop' @{ session_id = $session; last_assistant_message = 'Ovo je hook koji provjerava što će biti, jer sada treba ovdje.' }

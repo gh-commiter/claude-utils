@@ -16,6 +16,9 @@ import sys
 import tempfile
 
 NAMES = {"sl": "Slovenian", "en": "English", "cs": "Czech", "sk": "Slovak", "hr": "Croatian", "de": "German"}
+# jeziki, v katerih se vidi spol govorca: Claude o sebi v moškem spolu (primer: moška, ne ženska oblika)
+SELF = {"sl": "'sem naredil', not 'sem naredila'", "cs": "'udělal jsem', not 'udělala jsem'",
+        "sk": "'urobil som', not 'urobila som'", "hr": "'napravio sam', not 'napravila sam'"}
 # črke poleg a-z, ki jih jezik ima (velike se primerjajo kot male)
 ALPHABETS = {"sl": set("čšž"), "en": set(), "cs": set("áčďéěíňóřšťúůýž"), "sk": set("áäčďéíĺľňóôŕšťúýž"),
              "hr": set("čćđšž"), "de": set("äöüß")}
@@ -125,7 +128,8 @@ def on_prompt(data):
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
             "additionalContext": f"The user writes in {name}. Write every reply to the user in {name}, "
-                                 f"and do your thinking in {name} too. Code, commands and quoted text stay as they are."}}))
+                                 f"and do your thinking in {name} too. Code, commands and quoted text stay as they are."
+                                 + (f" Refer to yourself in the masculine grammatical gender ({SELF[lang]})." if lang in SELF else "")}}))
     return 0
 
 
