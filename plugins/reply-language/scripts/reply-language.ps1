@@ -16,6 +16,8 @@ $Codes = 'sl', 'en', 'cs', 'sk', 'hr', 'de'  # order of the .py dicts: ties go t
 $Names = [Collections.Generic.Dictionary[string, string]]::new()
 foreach ($kv in ('sl', 'Slovenian'), ('en', 'English'), ('cs', 'Czech'), ('sk', 'Slovak'), ('hr', 'Croatian'), ('de', 'German')) {
     $Names[$kv[0]] = $kv[1] }
+# letters besides a-z that a language has (compared lower case)
+$Alphabets = @{ sl = 'čšž'; en = ''; cs = 'áčďéěíňóřšťúůýž'; sk = 'áäčďéíĺľňóôŕšťúýž'; hr = 'čćđšž'; de = 'äöüß' }
 # always allowed; besides them only the language of the user's prompt
 $Allowed = @(foreach ($k in "$env:REPLY_LANGUAGE_ALLOWED".Replace(' ', '').Split(',')) { if ($Codes -ccontains $k) { $k } })
 if (-not $Allowed.Count) { $Allowed = @('en') }
@@ -172,11 +174,20 @@ function Invoke-Prompt($data) {
 
 # Foreign language the text is clearly written in, or $null (single foreign words or names are fine)
 function Get-Foreign([string]$text, $permitted) {
-    # letters Slovenian does not have (ě ř ů ý á í ...): 3 or more such words are a foreign sentence, even inside a
-    # Slovenian paragraph where counting words would dilute it; one or two names (Dvořák) are fine
-    $words = @([regex]::Matches((Strip-Code $text), '[\p{L}\p{Nl}\p{No}]+') | ForEach-Object { $_.Value })
-    foreach ($kv in @($Chars.GetEnumerator() | ForEach-Object { , @($_.Key, $_.Value) }) + , @('cs', $Shared)) {
-        if ($permitted -cnotcontains $kv[0] -and @($words | Where-Object { $_ -cmatch $kv[1] }).Count -ge 3) { return $kv[0] }
+    # alphabet of the allowed languages: 3 or more words with a letter outside it (ř ů ý, ć đ, Cyrillic ...) are a
+    # foreign sentence, even inside a paragraph where counting words would dilute it; one or two names (Dvořák) are fine
+    $letters = 'abcdefghijklmnopqrstuvwxyz' + (@($permitted | ForEach-Object { $Alphabets[$_] }) -join '')
+    $odd = @([regex]::Matches((Strip-Code $text).ToLowerInvariant(), '[\p{L}\p{Nl}\p{No}]+') | ForEach-Object { $_.Value } |
+             Where-Object { @($_.ToCharArray() | Where-Object { $letters.IndexOf($_) -lt 0 }).Count })
+    if ($odd.Count -ge 3) {
+        $extra = @(($odd -join '').ToCharArray() | Where-Object { $letters.IndexOf($_) -lt 0 } | Select-Object -Unique)
+        $s = Get-Scores $text
+        $best = $null
+        foreach ($k in $Codes) {
+            if ($permitted -ccontains $k -or @($extra | Where-Object { $Alphabets[$k].IndexOf($_) -lt 0 }).Count) { continue }
+            if ($null -eq $best -or $s[$k] -gt $s[$best]) { $best = $k }
+        }
+        return $(if ($best) { $best } else { 'other' })
     }
     $s = Get-Scores $text
     $n = [regex]::Matches((Strip-Code $text), $Shared).Count
@@ -211,7 +222,8 @@ function Invoke-Stop($data) {
     foreach ($t in $texts) { $other = Get-Foreign $t $permitted; if ($other) { break } }
     if ($other) {
         $want = if ($Names.ContainsKey($lang)) { $Names[$lang] } else { $Names[$Allowed[0]] }
-        [Console]::Error.Write("The reply is in $($Names[$other]). Only $(@($Allowed | ForEach-Object { $Names[$_] }) -join ', ') " +
+        $otherName = if ($Names.ContainsKey($other)) { $Names[$other] } else { 'another language' }
+        [Console]::Error.Write("The reply is in $otherName. Only $(@($Allowed | ForEach-Object { $Names[$_] }) -join ', ') " +
             "or the user's language ($want) are allowed. Write the last reply again in $want, without apologizing or explaining why.`r`n")
         return 2
     }
@@ -264,6 +276,8 @@ function Invoke-SelfTest {
     Remove-Item $tr
     # a Czech sentence inside a Slovenian paragraph: letters Slovenian does not have
     Assert ((Get-Foreign ($sl.Substring(0, 300) + 'Přepíšu skript na kurzor s dynamickým SQL přes všechny tyto databáze.') @('sl', 'en')) -ceq 'cs') 'foreign letters'
+    Assert ((Get-Foreign ($sl.Substring(0, 300) + 'Ovo je ćevapčići, đak i ćuk sjedi.') @('sl', 'en')) -ceq 'hr') 'Croatian letters'
+    Assert ((Get-Foreign ($sl.Substring(0, 300) + 'Это просто тест на русском языке.') @('sl', 'en')) -ceq 'other') 'outside the alphabet'
     Assert ($null -eq (Get-Foreign 'Skladbo je napisal Dvořák, ki je bil češki skladatelj, in to je zdaj tudi v tej datoteki prav, kot je treba.' @('sl', 'en'))) 'names are fine'
     # a quoted foreign reply does not change the session language
     Assert ((Get-Language ("zakaj hook ne ujame tega tvojega sranja ... '" + $cz + "'")) -ceq 'sl') 'detect without quotes'

@@ -16,6 +16,9 @@ import sys
 import tempfile
 
 NAMES = {"sl": "Slovenian", "en": "English", "cs": "Czech", "sk": "Slovak", "hr": "Croatian", "de": "German"}
+# črke poleg a-z, ki jih jezik ima (velike se primerjajo kot male)
+ALPHABETS = {"sl": set("čšž"), "en": set(), "cs": set("áčďéěíňóřšťúůýž"), "sk": set("áäčďéíĺľňóôŕšťúýž"),
+             "hr": set("čćđšž"), "de": set("äöüß")}
 # vedno dovoljeni; poleg njih le jezik uporabnikovega vprašanja
 ALLOWED = [k for k in os.environ.get("REPLY_LANGUAGE_ALLOWED", "en").replace(" ", "").split(",") if k in NAMES] or ["en"]
 WORDS = {
@@ -128,12 +131,15 @@ def on_prompt(data):
 
 def foreign(text, allowed):
     """Tuji jezik, v katerem je besedilo jasno napisano, ali None (posamezne tuje besede in imena so dovoljeni)."""
-    # črke, ki jih slovenščina nima (ě ř ů ý á í …): 3 ali več takih besed je tuj stavek, tudi sredi slovenskega
+    # abeceda dovoljenih jezikov: 3 ali več besed s črko zunaj nje (ř ů ý, ć đ, cirilica …) je tuj stavek, tudi sredi
     # odstavka, kjer bi ga štetje besed razredčilo; eno ali dve imeni (Dvořák) sta dovoljeni
-    words = re.findall(r"[^\W\d_]+", strip_code(text))
-    for k, rx in list(CHARS.items()) + [("cs", SHARED)]:
-        if k not in allowed and sum(bool(rx.search(w)) for w in words) >= 3:
-            return k
+    letters = set("abcdefghijklmnopqrstuvwxyz").union(*(ALPHABETS[k] for k in allowed if k in ALPHABETS))
+    odd = [w for w in re.findall(r"[^\W\d_]+", strip_code(text).lower()) if not set(w) <= letters]
+    if len(odd) >= 3:
+        extra = set("".join(odd)) - letters
+        fits = [k for k in NAMES if k not in allowed and extra <= ALPHABETS[k]]
+        s, _ = scores(text)
+        return max(fits, key=lambda k: s[k]) if fits else "other"
     s, _ = scores(text)
     s["cs"] += len(SHARED.findall(strip_code(text)))
     s["sk"] += len(SHARED.findall(strip_code(text)))
@@ -159,7 +165,7 @@ def on_stop(data):
     other = next(filter(None, (foreign(t, allowed) for t in texts)), None)
     if other:
         want = NAMES.get(lang, NAMES[ALLOWED[0]])
-        sys.stderr.write(f"The reply is in {NAMES[other]}. Only {', '.join(NAMES[k] for k in ALLOWED)} or the user's language ({want}) "
+        sys.stderr.write(f"The reply is in {NAMES.get(other, 'another language')}. Only {', '.join(NAMES[k] for k in ALLOWED)} or the user's language ({want}) "
                          f"are allowed. Write the last reply again in {want}, without apologizing or explaining why.\n")
         return 2
     return 0

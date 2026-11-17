@@ -55,6 +55,8 @@ os.remove(tr)
 assert rl.foreign(sl[:300] + "Přepíšu skript na kurzor s dynamickým SQL přes všechny tyto databáze.", {"sl", "en"}) == "cs"
 assert rl.foreign("Skladbo je napisal Dvořák, ki je bil češki skladatelj, in to je zdaj tudi v tej datoteki prav, kot je treba.", {"sl", "en"}) is None  # imena
 assert rl.foreign("Přepíšu skript s dynamickým SQL přes databáze.", {"sl", "en", "cs"}) is None  # uporabnik piše češko
+assert rl.foreign(sl[:300] + "Ovo je ćevapčići, đak i ćuk sjedi.", {"sl", "en"}) == "hr"
+assert rl.foreign(sl[:300] + "Это просто тест на русском языке.", {"sl", "en"}) == "other"  # pisava zunaj abecede
 # citiran tuji odgovor ne spremeni jezika seje
 assert rl.detect("zakaj hook ne ujame tega tvojega sranja ... '" + cz + "'") == "sl"
 assert rl.detect("Proč to nefunguje, když je všechno správně?") == "cs"
